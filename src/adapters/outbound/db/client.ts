@@ -1,6 +1,7 @@
 import { Kysely, PostgresDialect, sql } from "kysely";
 import { Pool } from "pg";
 import { env } from "../../../config/env.js";
+import { logger } from "../../../shared/logger.js";
 
 export interface Database {
   profiles: {
@@ -20,6 +21,11 @@ export interface Database {
 }
 
 const pool = new Pool({ connectionString: env.DATABASE_URL });
+
+// Without this listener, idle client errors are unhandled and crash the process.
+pool.on("error", (err) => {
+  logger.error({ err }, "PostgreSQL pool idle client error");
+});
 
 export const db = new Kysely<Database>({
   dialect: new PostgresDialect({ pool }),

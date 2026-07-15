@@ -7,13 +7,24 @@ const EXCHANGE_DISCOVERY = "discovery.events";
 
 export type AmqpConnection = Awaited<ReturnType<typeof amqplib.connect>>;
 
-export async function createAmqpPublisher(): Promise<{
+export async function createAmqpPublisher(options?: {
+  onClose?: (err?: Error) => void;
+}): Promise<{
   publisher: IEventPublisher;
   connection: AmqpConnection;
-  checkRabbitMQ(): Promise<"ok">;
   close(): Promise<void>;
 }> {
   const connection = await amqplib.connect(env.RABBITMQ_URL);
+
+  connection.on("close", (err?: Error) => {
+    logger.warn({ err }, "RabbitMQ connection closed");
+    options?.onClose?.(err);
+  });
+
+  connection.on("error", (err: Error) => {
+    logger.error({ err }, "RabbitMQ connection error");
+  });
+
   const channel = await connection.createConfirmChannel();
 
   await channel.assertExchange(EXCHANGE_DISCOVERY, "topic", { durable: true });
@@ -36,18 +47,18 @@ export async function createAmqpPublisher(): Promise<{
     },
   };
 
-  async function checkRabbitMQ(): Promise<"ok"> {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    if (!(connection as any).connection?.serverProperties) {
-      throw new Error("RabbitMQ disconnected");
-    }
-    return "ok";
-  }
-
   async function close(): Promise<void> {
-    await channel.close();
-    await connection.close();
+    try {
+      await channel.close();
+    } catch {
+      // already closed
+    }
+    try {
+      await connection.close();
+    } catch {
+      // already closed
+    }
   }
 
-  return { publisher, connection, checkRabbitMQ, close };
+  return { publisher, connection, close };
 }

@@ -16,6 +16,7 @@ initSentry({
 });
 
 import { logger } from "./shared/logger.js";
+import { withRetry } from "./shared/retry.js";
 import { buildServer } from "./adapters/inbound/http/server.js";
 import { checkPostgres, closeDatabase } from "./adapters/outbound/db/client.js";
 import { runMigrations } from "./adapters/outbound/db/migrator.js";
@@ -26,38 +27,111 @@ import { registerSubscribers } from "./adapters/outbound/messaging/subscriber.js
 import { OtelDiscoveryMetrics } from "./adapters/outbound/metrics/otel-discovery-metrics.js";
 import { DiscoveryUseCase } from "./domain/use-cases/discovery.use-case.js";
 import { DiscoveryService } from "./application/services/discovery.service.js";
+import type { IEventPublisher } from "./domain/ports/outbound/event-publisher.port.js";
+
+const STARTUP_RETRY = {
+  maxAttempts: 10,
+  initialDelayMs: 1_000,
+  factor: 2,
+} as const;
+
+class MutablePublisher implements IEventPublisher {
+  #delegate: IEventPublisher;
+
+  constructor(initial: IEventPublisher) {
+    this.#delegate = initial;
+  }
+
+  replace(publisher: IEventPublisher): void {
+    this.#delegate = publisher;
+  }
+
+  async publish(routingKey: string, payload: object): Promise<void> {
+    return this.#delegate.publish(routingKey, payload);
+  }
+}
 
 async function main(): Promise<void> {
+  // Mutable state managed by the RabbitMQ reconnection loop
+  let rabbitMQConnected = false;
+  let isReconnecting = false;
+  let isShuttingDown = false;
+  let closeCurrentRabbitMQ: (() => Promise<void>) | undefined;
+
+  // Assigned before the connection can drop; assertion is intentional.
+  let mutablePublisher!: MutablePublisher;
+  let discoveryService!: DiscoveryService;
+
+  function scheduleRabbitMQReconnect(): void {
+    if (isShuttingDown || isReconnecting) return;
+    isReconnecting = true;
+    setTimeout(() => {
+      void reconnectRabbitMQ();
+    }, 1_000);
+  }
+
+  async function reconnectRabbitMQ(): Promise<void> {
+    rabbitMQConnected = false;
+    logger.warn("RabbitMQ disconnected, starting reconnection...");
+    try {
+      const { publisher, connection, close } = await withRetry(
+        () => createAmqpPublisher({ onClose: scheduleRabbitMQReconnect }),
+        { ...STARTUP_RETRY, label: "rabbitmq-reconnect" },
+      );
+
+      closeCurrentRabbitMQ = close;
+      mutablePublisher.replace(publisher);
+      await registerSubscribers(connection, discoveryService);
+      rabbitMQConnected = true;
+      isReconnecting = false;
+      logger.info("RabbitMQ reconnected successfully");
+    } catch (error) {
+      logger.error({ error }, "RabbitMQ reconnection failed after all attempts, will retry");
+      isReconnecting = false;
+      scheduleRabbitMQReconnect();
+    }
+  }
+
   // 3. Connect database and run pending migrations
-  await checkPostgres();
+  await withRetry(checkPostgres, { ...STARTUP_RETRY, label: "postgres" });
   await runMigrations();
   const profileRepository = new PostgresProfileRepository();
   const suggestionRepository = new PostgresSuggestionRepository();
   logger.info("Database connected (PostgreSQL)");
 
   // 4. Connect RabbitMQ
-  const { publisher, connection, checkRabbitMQ, close: closePublisher } =
-    await createAmqpPublisher();
-  logger.info("RabbitMQ connected");
+  const { publisher: initialPublisher, connection: initialConnection, close: initialClose } =
+    await withRetry(
+      () => createAmqpPublisher({ onClose: scheduleRabbitMQReconnect }),
+      { ...STARTUP_RETRY, label: "rabbitmq" },
+    );
+
+  rabbitMQConnected = true;
+  closeCurrentRabbitMQ = initialClose;
+  mutablePublisher = new MutablePublisher(initialPublisher);
 
   // Wire dependencies
   const discoveryMetrics = new OtelDiscoveryMetrics();
   const discoveryUseCase = new DiscoveryUseCase({
     profileRepository,
     suggestionRepository,
-    eventPublisher: publisher,
+    eventPublisher: mutablePublisher,
     metrics: discoveryMetrics,
   });
-  const discoveryService = new DiscoveryService(discoveryUseCase);
+  discoveryService = new DiscoveryService(discoveryUseCase);
 
   // 5. Register queue subscribers
-  await registerSubscribers(connection, discoveryService);
+  await registerSubscribers(initialConnection, discoveryService);
+  logger.info("RabbitMQ connected");
 
   // 6. Start HTTP server
   const server = await buildServer({
     dependencyCheckers: {
       postgres: checkPostgres,
-      rabbitmq: checkRabbitMQ,
+      rabbitmq: async () => {
+        if (!rabbitMQConnected) throw new Error("RabbitMQ disconnected");
+        return "ok";
+      },
       otel: async () => "ok",
     },
   });
@@ -68,6 +142,7 @@ async function main(): Promise<void> {
   // 7. Handle SIGTERM and SIGINT — graceful shutdown
   async function shutdown(signal: string): Promise<void> {
     logger.info({ signal }, "Received shutdown signal, starting graceful shutdown");
+    isShuttingDown = true;
 
     try {
       await server.close();
@@ -77,7 +152,7 @@ async function main(): Promise<void> {
     }
 
     try {
-      await closePublisher();
+      if (closeCurrentRabbitMQ) await closeCurrentRabbitMQ();
       logger.info("RabbitMQ closed");
     } catch (error) {
       logger.error(error, "Error closing RabbitMQ");
@@ -100,8 +175,12 @@ async function main(): Promise<void> {
     process.exit(0);
   }
 
-  process.on("SIGTERM", () => shutdown("SIGTERM"));
-  process.on("SIGINT", () => shutdown("SIGINT"));
+  process.on("SIGTERM", () => {
+    void shutdown("SIGTERM");
+  });
+  process.on("SIGINT", () => {
+    void shutdown("SIGINT");
+  });
 }
 
 main().catch((error) => {
