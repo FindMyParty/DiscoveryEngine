@@ -1,6 +1,6 @@
 import { Profile } from "../entities/profile.js";
 import { Suggestion, SuggestionStatus } from "../entities/suggestion.js";
-import type { IDiscoveryUseCase } from "../ports/inbound/discovery-use-case.port.js";
+import type { IDiscoveryUseCase, ProfileUpdatedPayload } from "../ports/inbound/discovery-use-case.port.js";
 import type { IProfileRepository } from "../ports/outbound/profile-repository.port.js";
 import type { ISuggestionRepository } from "../ports/outbound/suggestion-repository.port.js";
 import type { IEventPublisher } from "../ports/outbound/event-publisher.port.js";
@@ -34,14 +34,14 @@ export class DiscoveryUseCase implements IDiscoveryUseCase {
     this.#metrics = metrics;
   }
 
-  async handleProfileUpdated(profileId: string, isActive: boolean): Promise<void> {
-    const existing = await this.#profileRepository.findById(profileId);
+  async handleProfileUpdated(payload: ProfileUpdatedPayload): Promise<void> {
+    const existing = await this.#profileRepository.findById(payload.id);
 
     if (existing) {
-      existing.updateActiveStatus(isActive);
+      existing.update(payload);
       await this.#profileRepository.upsert(existing);
     } else {
-      const profile = Profile.create({ id: profileId, isActive });
+      const profile = Profile.create(payload);
       await this.#profileRepository.upsert(profile);
     }
   }

@@ -1,4 +1,4 @@
-import { Kysely, PostgresDialect, sql } from "kysely";
+import { Kysely, PostgresDialect, sql, type ColumnType } from "kysely";
 import { Pool } from "pg";
 import { env } from "../../../config/env.js";
 import { logger } from "../../../shared/logger.js";
@@ -7,6 +7,12 @@ export interface Database {
   profiles: {
     id: string;
     is_active: boolean;
+    is_dm: boolean;
+    is_player: boolean;
+    is_remote: boolean;
+    experience: string;
+    latitude: ColumnType<string | null, number | null, number | null>;
+    longitude: ColumnType<string | null, number | null, number | null>;
     created_at: Date;
     updated_at: Date;
   };
@@ -21,6 +27,10 @@ export interface Database {
 }
 
 const pool = new Pool({ connectionString: env.DATABASE_URL });
+
+pool.on("connect", () => {
+  logger.debug("PostgreSQL pool: new client connected");
+});
 
 // Without this listener, idle client errors are unhandled and crash the process.
 pool.on("error", (err) => {

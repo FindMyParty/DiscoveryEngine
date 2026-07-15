@@ -18,8 +18,40 @@ services:
   rabbitmq:
     image: rabbitmq:3.13-management-alpine
     environment:
-      RABBITMQ_DEFAULT_USER: user
-      RABBITMQ_DEFAULT_PASS: password
+      RABBITMQ_DEFAULT_USER: admin
+      RABBITMQ_DEFAULT_PASS: admin
+    entrypoint:
+      - sh
+      - -c
+      - |
+        mkdir -p /etc/rabbitmq/conf.d
+        cat > /etc/rabbitmq/conf.d/20-definitions.conf << 'EOF'
+        management.load_definitions = /etc/rabbitmq/definitions.json
+        EOF
+        cat > /etc/rabbitmq/definitions.json << 'END_DEFINITIONS'
+        {
+          "vhosts": [{"name": "/"}],
+          "users": [{"name": "admin", "password_hash": "yjT6AA4Z42nA7hNegV8EWM5FotkhoKnz97Scv8rgv8SnUgpT", "hashing_algorithm": "rabbit_password_hashing_sha256", "tags": "administrator", "limits": {}}],
+          "permissions": [{"user": "admin", "vhost": "/", "configure": ".*", "write": ".*", "read": ".*"}],
+          "exchanges": [
+            {"name": "discovery.dlx",    "vhost": "/", "type": "topic", "durable": true, "auto_delete": false, "internal": false, "arguments": {}},
+            {"name": "profile.events",   "vhost": "/", "type": "topic", "durable": true, "auto_delete": false, "internal": false, "arguments": {}},
+            {"name": "match.events",     "vhost": "/", "type": "topic", "durable": true, "auto_delete": false, "internal": false, "arguments": {}},
+            {"name": "discovery.events", "vhost": "/", "type": "topic", "durable": true, "auto_delete": false, "internal": false, "arguments": {}}
+          ],
+          "queues": [
+            {"name": "discovery-engine.profile.updated",    "vhost": "/", "durable": true, "auto_delete": false, "exclusive": false, "arguments": {"x-dead-letter-exchange": "discovery.dlx"}},
+            {"name": "discovery-engine.match.created",      "vhost": "/", "durable": true, "auto_delete": false, "exclusive": false, "arguments": {"x-dead-letter-exchange": "discovery.dlx"}},
+            {"name": "discovery-engine.discovery.triggered","vhost": "/", "durable": true, "auto_delete": false, "exclusive": false, "arguments": {"x-dead-letter-exchange": "discovery.dlx"}}
+          ],
+          "bindings": [
+            {"source": "profile.events",   "vhost": "/", "destination": "discovery-engine.profile.updated",     "destination_type": "queue", "routing_key": "profile.profile.updated",       "arguments": {}},
+            {"source": "match.events",     "vhost": "/", "destination": "discovery-engine.match.created",       "destination_type": "queue", "routing_key": "match.match.created",           "arguments": {}},
+            {"source": "discovery.events", "vhost": "/", "destination": "discovery-engine.discovery.triggered", "destination_type": "queue", "routing_key": "discovery.discovery.triggered", "arguments": {}}
+          ]
+        }
+        END_DEFINITIONS
+        exec docker-entrypoint.sh rabbitmq-server
     ports:
       - "5672:5672"
       - "15672:15672"
@@ -31,6 +63,20 @@ services:
       timeout: 5s
       retries: 5
 
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@local.dev
+      PGADMIN_DEFAULT_PASSWORD: admin
+    ports:
+      - "5050:80"
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+    depends_on:
+      postgres:
+        condition: service_healthy
+
 volumes:
   postgres_data:
   rabbitmq_data:
+  pgadmin_data:

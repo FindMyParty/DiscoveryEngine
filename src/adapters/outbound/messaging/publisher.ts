@@ -32,6 +32,7 @@ export async function createAmqpPublisher(options?: {
 
   const publisher: IEventPublisher = {
     async publish(routingKey: string, payload: object): Promise<void> {
+      logger.debug({ routingKey }, "Publishing event");
       return new Promise((resolve, reject) => {
         const sent = channel.publish(
           EXCHANGE_DISCOVERY,

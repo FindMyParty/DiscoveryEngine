@@ -1,6 +1,7 @@
 import { db } from "./client.js";
 import { Suggestion, type SuggestionStatusType } from "../../../domain/entities/suggestion.js";
 import type { ISuggestionRepository } from "../../../domain/ports/outbound/suggestion-repository.port.js";
+import { logger } from "../../../shared/logger.js";
 
 export class PostgresSuggestionRepository implements ISuggestionRepository {
   #toEntity(row: {
@@ -15,6 +16,11 @@ export class PostgresSuggestionRepository implements ISuggestionRepository {
   }
 
   async save(suggestion: Suggestion): Promise<Suggestion> {
+    logger.debug(
+      { suggestionId: suggestion.id, discovererId: suggestion.discovererProfileId, suggestedId: suggestion.suggestedProfileId },
+      "Saving suggestion",
+    );
+
     const row = await db
       .insertInto("suggestions")
       .values({
@@ -33,6 +39,7 @@ export class PostgresSuggestionRepository implements ISuggestionRepository {
       .returningAll()
       .executeTakeFirstOrThrow();
 
+    logger.debug({ suggestionId: suggestion.id }, "Suggestion saved");
     return this.#toEntity(row);
   }
 
@@ -53,6 +60,8 @@ export class PostgresSuggestionRepository implements ISuggestionRepository {
     profileId2: string,
     status: SuggestionStatusType,
   ): Promise<void> {
+    logger.debug({ profileId1, profileId2, status }, "Updating suggestion status for matched pair");
+
     await db
       .updateTable("suggestions")
       .set({ status, updated_at: new Date() })
@@ -69,5 +78,7 @@ export class PostgresSuggestionRepository implements ISuggestionRepository {
         ]),
       )
       .execute();
+
+    logger.debug({ profileId1, profileId2, status }, "Suggestion status updated");
   }
 }
