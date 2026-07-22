@@ -13,12 +13,6 @@ export class InMemoryProfileRepository implements IProfileRepository {
     return this.#profiles.get(id) ?? null;
   }
 
-  async findUnsuggestedActiveProfiles(discovererId: string): Promise<Profile[]> {
-    return [...this.#profiles.values()].filter(
-      (profile) => profile.isActive && profile.id !== discovererId,
-    );
-  }
-
   clear(): void {
     this.#profiles.clear();
   }

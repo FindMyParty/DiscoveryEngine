@@ -1,4 +1,8 @@
-import type { IDiscoveryUseCase, ProfileUpdatedPayload } from "../../domain/ports/inbound/discovery-use-case.port.js";
+import type {
+  IDiscoveryUseCase,
+  ProfileUpdatedPayload,
+  ProfilesMatchedPayload,
+} from "../../domain/ports/inbound/discovery-use-case.port.js";
 
 export class DiscoveryService {
   readonly #discoveryUseCase: IDiscoveryUseCase;
@@ -11,8 +15,8 @@ export class DiscoveryService {
     await this.#discoveryUseCase.handleProfileUpdated(payload);
   }
 
-  async handleProfilesMatched(profileId1: string, profileId2: string): Promise<void> {
-    await this.#discoveryUseCase.handleProfilesMatched(profileId1, profileId2);
+  async handleProfilesMatched(payload: ProfilesMatchedPayload): Promise<void> {
+    await this.#discoveryUseCase.handleProfilesMatched(payload);
   }
 
   async triggerDiscovery(profileId: string): Promise<void> {

@@ -1,15 +1,13 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { DiscoveryUseCase } from "../../../src/domain/use-cases/discovery.use-case.js";
-import { SuggestionStatus } from "../../../src/domain/entities/suggestion.js";
 import { Experience } from "../../../src/domain/entities/profile.js";
 import { InMemoryProfileRepository } from "../../../src/adapters/outbound/db/in-memory-profile.repository.js";
-import { InMemorySuggestionRepository } from "../../../src/adapters/outbound/db/in-memory-suggestion.repository.js";
+import { InMemoryMatchRepository } from "../../../src/adapters/outbound/db/in-memory-match.repository.js";
 import { InMemoryEventPublisher } from "../../../src/adapters/outbound/messaging/in-memory-event.publisher.js";
 import type { ProfileUpdatedPayload } from "../../../src/domain/ports/inbound/discovery-use-case.port.js";
 
 const PROFILE_1 = "00000000-0000-0000-0000-000000000001";
 const PROFILE_2 = "00000000-0000-0000-0000-000000000002";
-const PROFILE_3 = "00000000-0000-0000-0000-000000000003";
 
 function profilePayload(id: string, isActive = true): ProfileUpdatedPayload {
   return {
@@ -24,11 +22,6 @@ function profilePayload(id: string, isActive = true): ProfileUpdatedPayload {
   };
 }
 
-const noopMetrics = {
-  recordDiscoveryTriggered: () => {},
-  recordSuggestionsCreated: () => {},
-};
-
 const noopLogger = {
   debug: () => {},
   info: () => {},
@@ -38,19 +31,25 @@ const noopLogger = {
 
 describe("DiscoveryUseCase", () => {
   let profileRepository: InMemoryProfileRepository;
-  let suggestionRepository: InMemorySuggestionRepository;
+  let matchRepository: InMemoryMatchRepository;
   let eventPublisher: InMemoryEventPublisher;
+  let discoveriesTriggered: number;
   let useCase: DiscoveryUseCase;
 
   beforeEach(() => {
     profileRepository = new InMemoryProfileRepository();
-    suggestionRepository = new InMemorySuggestionRepository();
+    matchRepository = new InMemoryMatchRepository();
     eventPublisher = new InMemoryEventPublisher();
+    discoveriesTriggered = 0;
     useCase = new DiscoveryUseCase({
       profileRepository,
-      suggestionRepository,
+      matchRepository,
       eventPublisher,
-      metrics: noopMetrics,
+      metrics: {
+        recordDiscoveryTriggered: () => {
+          discoveriesTriggered += 1;
+        },
+      },
       logger: noopLogger,
     });
   });
@@ -73,57 +72,23 @@ describe("DiscoveryUseCase", () => {
     });
   });
 
-  describe("triggerDiscovery", () => {
-    it("creates suggestions and publishes the suggestions listed event", async () => {
-      await useCase.handleProfileUpdated(profilePayload(PROFILE_1));
-      await useCase.handleProfileUpdated(profilePayload(PROFILE_2));
-      await useCase.handleProfileUpdated(profilePayload(PROFILE_3));
+  describe("handleProfilesMatched", () => {
+    it("persists the match for the profile pair", async () => {
+      await useCase.handleProfilesMatched({ profileId1: PROFILE_2, profileId2: PROFILE_1 });
 
-      await useCase.triggerDiscovery(PROFILE_1);
-
-      const events = eventPublisher.getByRoutingKey("discovery.suggestion.listed");
-      expect(events).toHaveLength(1);
-
-      const payload = events[0].payload as { profileId: string; suggestions: string[] };
-      expect(payload.profileId).toBe(PROFILE_1);
-      expect(payload.suggestions).toHaveLength(2);
-      expect(payload.suggestions).toEqual(expect.arrayContaining([PROFILE_2, PROFILE_3]));
-    });
-
-    it("does not publish an event when there are no candidates", async () => {
-      await useCase.handleProfileUpdated(profilePayload(PROFILE_1));
-
-      await useCase.triggerDiscovery(PROFILE_1);
-
-      const events = eventPublisher.getByRoutingKey("discovery.suggestion.listed");
-      expect(events).toHaveLength(0);
-    });
-
-    it("excludes inactive profiles from suggestions", async () => {
-      await useCase.handleProfileUpdated(profilePayload(PROFILE_1, true));
-      await useCase.handleProfileUpdated(profilePayload(PROFILE_2, false));
-
-      await useCase.triggerDiscovery(PROFILE_1);
-
-      const events = eventPublisher.getByRoutingKey("discovery.suggestion.listed");
-      expect(events).toHaveLength(0);
+      const matches = await matchRepository.findByProfileId(PROFILE_1);
+      expect(matches).toHaveLength(1);
+      expect(matches[0].profileId1).toBe(PROFILE_1);
+      expect(matches[0].profileId2).toBe(PROFILE_2);
     });
   });
 
-  describe("handleProfilesMatched", () => {
-    it("marks suggestions as matched in both directions", async () => {
-      await useCase.handleProfileUpdated(profilePayload(PROFILE_1));
-      await useCase.handleProfileUpdated(profilePayload(PROFILE_2));
+  describe("triggerDiscovery", () => {
+    it("records the discovery triggered metric and publishes nothing until Redis lands", async () => {
       await useCase.triggerDiscovery(PROFILE_1);
-      await useCase.triggerDiscovery(PROFILE_2);
 
-      await useCase.handleProfilesMatched(PROFILE_1, PROFILE_2);
-
-      const forward = await suggestionRepository.findByPair(PROFILE_1, PROFILE_2);
-      const reverse = await suggestionRepository.findByPair(PROFILE_2, PROFILE_1);
-
-      expect(forward?.status).toBe(SuggestionStatus.MATCHED);
-      expect(reverse?.status).toBe(SuggestionStatus.MATCHED);
+      expect(discoveriesTriggered).toBe(1);
+      expect(eventPublisher.events).toHaveLength(0);
     });
   });
 });

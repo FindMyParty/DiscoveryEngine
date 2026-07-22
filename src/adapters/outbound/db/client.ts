@@ -16,13 +16,10 @@ export interface Database {
     created_at: Date;
     updated_at: Date;
   };
-  suggestions: {
-    id: string;
-    discoverer_profile_id: string;
-    suggested_profile_id: string;
-    status: string;
-    created_at: Date;
-    updated_at: Date;
+  matches: {
+    profile_id_1: string;
+    profile_id_2: string;
+    matched_at: Date;
   };
 }
 

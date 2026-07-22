@@ -1,23 +1,22 @@
+import { Match } from "../entities/match.js";
 import { Profile } from "../entities/profile.js";
-import { Suggestion, SuggestionStatus } from "../entities/suggestion.js";
-import type { IDiscoveryUseCase, ProfileUpdatedPayload } from "../ports/inbound/discovery-use-case.port.js";
+import type {
+  IDiscoveryUseCase,
+  ProfileUpdatedPayload,
+  ProfilesMatchedPayload,
+} from "../ports/inbound/discovery-use-case.port.js";
 import type { IProfileRepository } from "../ports/outbound/profile-repository.port.js";
-import type { ISuggestionRepository } from "../ports/outbound/suggestion-repository.port.js";
+import type { IMatchRepository } from "../ports/outbound/match-repository.port.js";
 import type { IEventPublisher } from "../ports/outbound/event-publisher.port.js";
 import type { ILogger } from "../ports/outbound/logger.port.js";
 
-const EVENTS = Object.freeze({
-  SUGGESTIONS_LISTED: "discovery.suggestion.listed",
-});
-
 export interface IDiscoveryMetrics {
   recordDiscoveryTriggered(): void;
-  recordSuggestionsCreated(count: number): void;
 }
 
 interface DiscoveryUseCaseDeps {
   profileRepository: IProfileRepository;
-  suggestionRepository: ISuggestionRepository;
+  matchRepository: IMatchRepository;
   eventPublisher: IEventPublisher;
   metrics: IDiscoveryMetrics;
   logger: ILogger;
@@ -25,14 +24,16 @@ interface DiscoveryUseCaseDeps {
 
 export class DiscoveryUseCase implements IDiscoveryUseCase {
   readonly #profileRepository: IProfileRepository;
-  readonly #suggestionRepository: ISuggestionRepository;
+  readonly #matchRepository: IMatchRepository;
+  // Retained for the outbound suggestions.listed plumbing; the publish itself
+  // returns with the upcoming Redis-based suggestion generation.
   readonly #eventPublisher: IEventPublisher;
   readonly #metrics: IDiscoveryMetrics;
   readonly #logger: ILogger;
 
-  constructor({ profileRepository, suggestionRepository, eventPublisher, metrics, logger }: DiscoveryUseCaseDeps) {
+  constructor({ profileRepository, matchRepository, eventPublisher, metrics, logger }: DiscoveryUseCaseDeps) {
     this.#profileRepository = profileRepository;
-    this.#suggestionRepository = suggestionRepository;
+    this.#matchRepository = matchRepository;
     this.#eventPublisher = eventPublisher;
     this.#metrics = metrics;
     this.#logger = logger;
@@ -58,47 +59,27 @@ export class DiscoveryUseCase implements IDiscoveryUseCase {
     );
   }
 
-  async handleProfilesMatched(profileId1: string, profileId2: string): Promise<void> {
+  async handleProfilesMatched(payload: ProfilesMatchedPayload): Promise<void> {
+    const { profileId1, profileId2, matchedAt } = payload;
     this.#logger.debug({ profileId1, profileId2 }, "Handling profiles matched event");
-    await this.#suggestionRepository.updateStatusForMatchedPair(
-      profileId1,
-      profileId2,
-      SuggestionStatus.MATCHED,
+
+    const match = Match.create({ profileId1, profileId2, matchedAt });
+    await this.#matchRepository.save(match);
+    this.#logger.info(
+      { profileId1: match.profileId1, profileId2: match.profileId2 },
+      "Match persisted from profiles matched event",
     );
-    this.#logger.info({ profileId1, profileId2 }, "Marked suggestions as matched for profile pair");
   }
 
   async triggerDiscovery(profileId: string): Promise<void> {
     this.#logger.debug({ profileId }, "Handling discovery triggered event");
     this.#metrics.recordDiscoveryTriggered();
 
-    const candidates = await this.#profileRepository.findUnsuggestedActiveProfiles(profileId);
-
-    if (candidates.length === 0) {
-      this.#logger.warn({ profileId }, "Discovery found no candidate profiles to suggest");
-      return;
-    }
-
-    const suggestions = await Promise.all(
-      candidates.map(async (candidate) => {
-        const suggestion = Suggestion.create({
-          discovererProfileId: profileId,
-          suggestedProfileId: candidate.id,
-        });
-        return this.#suggestionRepository.save(suggestion);
-      }),
-    );
-
-    this.#metrics.recordSuggestionsCreated(suggestions.length);
-
-    await this.#eventPublisher.publish(EVENTS.SUGGESTIONS_LISTED, {
-      profileId,
-      suggestions: suggestions.map((suggestion) => suggestion.suggestedProfileId),
-    });
-
+    // TODO: rebuild suggestion generation and the suggestions.listed publish
+    // on top of the upcoming Redis integration.
     this.#logger.info(
-      { profileId, suggestionsCount: suggestions.length },
-      "Suggestions listed and published for profile",
+      { profileId },
+      "Discovery triggered received; suggestion generation pending Redis integration",
     );
   }
 }

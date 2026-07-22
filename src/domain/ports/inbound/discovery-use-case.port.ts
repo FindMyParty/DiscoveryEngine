@@ -11,8 +11,14 @@ export interface ProfileUpdatedPayload {
   longitude: number | null;
 }
 
+export interface ProfilesMatchedPayload {
+  profileId1: string;
+  profileId2: string;
+  matchedAt?: Date;
+}
+
 export interface IDiscoveryUseCase {
   handleProfileUpdated(payload: ProfileUpdatedPayload): Promise<void>;
-  handleProfilesMatched(profileId1: string, profileId2: string): Promise<void>;
+  handleProfilesMatched(payload: ProfilesMatchedPayload): Promise<void>;
   triggerDiscovery(profileId: string): Promise<void>;
 }

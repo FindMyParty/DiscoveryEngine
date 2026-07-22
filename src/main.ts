@@ -21,7 +21,7 @@ import { buildServer } from "./adapters/inbound/http/server.js";
 import { checkPostgres, closeDatabase } from "./adapters/outbound/db/client.js";
 import { runMigrations } from "./adapters/outbound/db/migrator.js";
 import { PostgresProfileRepository } from "./adapters/outbound/db/profile.repository.js";
-import { PostgresSuggestionRepository } from "./adapters/outbound/db/suggestion.repository.js";
+import { PostgresMatchRepository } from "./adapters/outbound/db/match.repository.js";
 import { createAmqpPublisher } from "./adapters/outbound/messaging/publisher.js";
 import { registerSubscribers } from "./adapters/outbound/messaging/subscriber.js";
 import { OtelDiscoveryMetrics } from "./adapters/outbound/metrics/otel-discovery-metrics.js";
@@ -96,7 +96,7 @@ async function main(): Promise<void> {
   await withRetry(checkPostgres, { ...STARTUP_RETRY, label: "postgres" });
   await runMigrations();
   const profileRepository = new PostgresProfileRepository();
-  const suggestionRepository = new PostgresSuggestionRepository();
+  const matchRepository = new PostgresMatchRepository();
   logger.info("Database connected (PostgreSQL)");
 
   // 4. Connect RabbitMQ
@@ -114,7 +114,7 @@ async function main(): Promise<void> {
   const discoveryMetrics = new OtelDiscoveryMetrics();
   const discoveryUseCase = new DiscoveryUseCase({
     profileRepository,
-    suggestionRepository,
+    matchRepository,
     eventPublisher: mutablePublisher,
     metrics: discoveryMetrics,
     logger,

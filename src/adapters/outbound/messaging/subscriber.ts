@@ -30,8 +30,9 @@ const profileUpdatedSchema = z.object({
 });
 
 const profilesMatchedSchema = z.object({
-  profileId1: z.string().uuid(),
-  profileId2: z.string().uuid(),
+  id_profile1: z.string().uuid(),
+  id_profile2: z.string().uuid(),
+  data: z.coerce.date().optional(),
 });
 
 const discoveryTriggeredSchema = z.object({
@@ -80,9 +81,13 @@ export async function registerSubscribers(
     logger.debug({ queue: QUEUE_MATCH_CREATED }, "Message received");
     try {
       const payload = profilesMatchedSchema.parse(JSON.parse(msg.content.toString()));
-      await discoveryService.handleProfilesMatched(payload.profileId1, payload.profileId2);
+      await discoveryService.handleProfilesMatched({
+        profileId1: payload.id_profile1,
+        profileId2: payload.id_profile2,
+        matchedAt: payload.data,
+      });
       channel.ack(msg);
-      logger.debug({ queue: QUEUE_MATCH_CREATED, profileId1: payload.profileId1, profileId2: payload.profileId2 }, "Message processed");
+      logger.debug({ queue: QUEUE_MATCH_CREATED, profileId1: payload.id_profile1, profileId2: payload.id_profile2 }, "Message processed");
     } catch (error) {
       logger.error({ error, queue: QUEUE_MATCH_CREATED }, "Failed to process message");
       channel.nack(msg, false, false);

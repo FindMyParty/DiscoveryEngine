@@ -68,30 +68,4 @@ export class PostgresProfileRepository implements IProfileRepository {
     if (!row) return null;
     return this.#toEntity(row);
   }
-
-  async findUnsuggestedActiveProfiles(discovererId: string): Promise<Profile[]> {
-    logger.debug({ discovererId }, "Querying unmatched active profiles");
-
-    const rows = await db
-      .selectFrom("profiles")
-      .selectAll()
-      .where("is_active", "=", true)
-      .where("id", "!=", discovererId)
-      .where((eb) =>
-        eb.not(
-          eb.exists(
-            eb
-              .selectFrom("suggestions")
-              .select("id")
-              .whereRef("suggested_profile_id", "=", "profiles.id")
-              .where("discoverer_profile_id", "=", discovererId)
-              .where("status", "in", ["pending", "matched"]),
-          ),
-        ),
-      )
-      .execute();
-
-    logger.debug({ discovererId, count: rows.length }, "Unmatched active profiles fetched");
-    return rows.map((row) => this.#toEntity(row));
-  }
 }
