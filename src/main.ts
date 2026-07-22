@@ -117,6 +117,7 @@ async function main(): Promise<void> {
     suggestionRepository,
     eventPublisher: mutablePublisher,
     metrics: discoveryMetrics,
+    logger,
   });
   discoveryService = new DiscoveryService(discoveryUseCase);
 

@@ -29,6 +29,13 @@ const noopMetrics = {
   recordSuggestionsCreated: () => {},
 };
 
+const noopLogger = {
+  debug: () => {},
+  info: () => {},
+  warn: () => {},
+  error: () => {},
+};
+
 describe("DiscoveryUseCase", () => {
   let profileRepository: InMemoryProfileRepository;
   let suggestionRepository: InMemorySuggestionRepository;
@@ -44,6 +51,7 @@ describe("DiscoveryUseCase", () => {
       suggestionRepository,
       eventPublisher,
       metrics: noopMetrics,
+      logger: noopLogger,
     });
   });
 
@@ -56,12 +64,12 @@ describe("DiscoveryUseCase", () => {
       expect(profile!.isActive).toBe(true);
     });
 
-    it("updates an existing profile with the new payload", async () => {
+    it("skips persistence when a profile with the same id already exists (idempotent no-op)", async () => {
       await useCase.handleProfileUpdated(profilePayload(PROFILE_1, true));
       await useCase.handleProfileUpdated(profilePayload(PROFILE_1, false));
 
       const profile = await profileRepository.findById(PROFILE_1);
-      expect(profile!.isActive).toBe(false);
+      expect(profile!.isActive).toBe(true);
     });
   });
 
